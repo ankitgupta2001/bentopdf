@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        SIMPLE_MODE: false # false for default mode, true for simple mode
+        SIMPLE_MODE: true # false for default mode, true for simple mode
     container_name: bentopdf
     ports:
       - '8080:8080'
