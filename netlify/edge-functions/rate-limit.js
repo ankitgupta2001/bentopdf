@@ -1,42 +1,38 @@
-import { Blob } from 'node:blob';  // For Blobs API
-
 export default async (request, context) => {
   const ip = request.headers.get('x-nf-client-connection-ip') || 'unknown';
   const url = new URL(request.url);
 
-  // Skip non-main paths (e.g., /assets)
+  // Skip non-main paths (e.g., /assets) to avoid limiting static files
   if (url.pathname.startsWith('/assets/') || url.pathname.startsWith('/_next/')) {
-    return null;  // Let static files through
+    return null;
   }
 
   const key = `rate:${ip}`;
   const now = Date.now();
-  const hour = Math.floor(now / 3600000).toString();  // Current hour as string
+  const hour = Math.floor(now / 3600000).toString();  // Current hour key
 
   try {
-    // Get Blob store from context
-    const store = context.blobs.get('rate-limits');  // Named store
-    const blob = await store.get(key) || new Blob(['0'], { type: 'text/plain' });
-    const countText = await blob.text();
+    // Get Blobs store from context (Netlify 2025 API)
+    const store = context.blobs.getStore('rate-limits');  // Named store for persistence
+    const countText = await store.get(key) || '0';
     let count = parseInt(countText, 10) || 0;
 
-    if (count >= 50) {  // 50 requests/hour per IP
+    if (count >= 50) {  // 50 requests/hour per IP – adjust if needed
       return new Response('Too many requests. Try again in an hour.', {
         status: 429,
         headers: { 'Content-Type': 'text/plain', 'Retry-After': '3600' }
       });
     }
 
-    // Increment & store for 1 hour
+    // Increment & store as string for 1 hour TTL
     count++;
-    const newBlob = new Blob([count.toString()], { type: 'text/plain' });
-    await store.put(key, newBlob, { expirationTtl: 3600 });  // Auto-expire
+    await store.set(key, count.toString(), { expirationTtl: 3600 });  // Auto-expire
 
   } catch (e) {
-    console.log('Rate limit error:', e);  // Log but fail open
+    console.log('Rate limit error:', e);  // Log but fail open (allow access)
   }
 
-  return null;  // Allow request
+  return null;  // Allow the request
 };
 
 export const config = { path: '/*' };  // Apply to all paths
