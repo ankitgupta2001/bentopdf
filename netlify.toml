@@ -1,0 +1,3 @@
+[[edge_functions]]
+  path = "/*"  # All requests
+  function = "rate-limit"
