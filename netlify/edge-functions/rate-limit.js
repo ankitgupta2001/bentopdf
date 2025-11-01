@@ -1,38 +1,47 @@
-export default async (request, context) => {
+// netlify/edge-functions/rate-limit.js
+
+export default async (request) => {
   const ip = request.headers.get('x-nf-client-connection-ip') || 'unknown';
   const url = new URL(request.url);
 
-  // Skip non-main paths (e.g., /assets) to avoid limiting static files
-  if (url.pathname.startsWith('/assets/') || url.pathname.startsWith('/_next/')) {
-    return null;
+  // Skip static assets to avoid counting images/JS
+  if (
+    url.pathname.startsWith('/assets/') ||
+    url.pathname.startsWith('/_next/') ||
+    url.pathname.startsWith('/favicon')
+  ) {
+    return null; // Let through
   }
 
+  const kv = await Deno.openKv(); // Global Deno KV (free, persistent)
   const key = `rate:${ip}`;
   const now = Date.now();
-  const hour = Math.floor(now / 3600000).toString();  // Current hour key
+  const hour = Math.floor(now / 3600000); // Current hour
 
   try {
-    // Get Blobs store from context (Netlify 2025 API)
-    const store = context.blobs.getStore('rate-limits');  // Named store for persistence
-    const countText = await store.get(key) || '0';
-    let count = parseInt(countText, 10) || 0;
-
-    if (count >= 50) {  // 50 requests/hour per IP – adjust if needed
-      return new Response('Too many requests. Try again in an hour.', {
-        status: 429,
-        headers: { 'Content-Type': 'text/plain', 'Retry-After': '3600' }
-      });
+    const result = await kv.get([key]);
+    const data = result.value || { hour: 0, count: 0 };
+    
+    if (data.hour === hour) {
+      if (data.count >= 50) {
+        return new Response('Too many requests. Try again in an hour.', {
+          status: 429,
+          headers: {
+            'Content-Type': 'text/plain',
+            'Retry-After': '3600'
+          }
+        });
+      }
+      await kv.set([key], { hour, count: data.count + 1 }, { expireIn: 3600 });
+    } else {
+      await kv.set([key], { hour, count: 1 }, { expireIn: 3600 });
     }
-
-    // Increment & store as string for 1 hour TTL
-    count++;
-    await store.set(key, count.toString(), { expirationTtl: 3600 });  // Auto-expire
-
   } catch (e) {
-    console.log('Rate limit error:', e);  // Log but fail open (allow access)
+    console.error('KV error:', e);
+    // Fail open — don’t block real users
   }
 
-  return null;  // Allow the request
+  return null; // Allow request
 };
 
-export const config = { path: '/*' };  // Apply to all paths
+export const config = { path: '/*' };
